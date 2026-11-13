@@ -1,0 +1,67 @@
+name: Build ONNX Runtime Windows cp315 Wheel
+
+on:
+  workflow_dispatch:
+    inputs:
+      ort_tag:
+        description: "ONNX Runtime git tag"
+        required: true
+        default: "v1.32.0"
+
+jobs:
+  build-win-x64:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - name: Setup Python 3.15
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.15"
+          architecture: "x64"
+
+      - name: Setup MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Install Python build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel packaging "numpy==2.5.4" cmake ninja
+
+      - name: Clone ONNX Runtime
+        shell: pwsh
+        run: |
+          git clone --branch "${{ inputs.ort_tag }}" --depth 1 https://github.com/microsoft/onnxruntime.git ort
+
+      - name: Patch setup.py for Python 3.15 classifier
+        shell: pwsh
+        run: |
+          python -c "p='ort/setup.py'; s=open(p,'r',encoding='utf-8').read(); t='\"Programming Language :: Python :: 3.14\",'; s=s.replace(t, t+'\n    \"Programming Language :: Python :: 3.15\",') if '3.15' not in s else s; open(p,'w',encoding='utf-8').write(s)"
+
+      - name: Build ONNX Runtime CPU Wheel
+        shell: pwsh
+        run: |
+          cd ort
+          python tools\ci_build\build.py `
+            --build_dir build\Windows `
+            --config Release `
+            --build_wheel `
+            --skip_tests `
+            --parallel `
+            --compile_no_warning_as_error `
+            --cmake_generator Ninja
+
+      - name: Collect Wheel
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist_out | Out-Null
+          Get-ChildItem -Path ort\build\Windows -Recurse -Filter "*.whl" | Copy-Item -Destination dist_out -Force
+          Get-ChildItem dist_out
+
+      - name: Upload Wheel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnxruntime-${{ inputs.ort_tag }}-cp315-win_amd64
+          path: dist_out/*.whl
+          retention-days: 90
