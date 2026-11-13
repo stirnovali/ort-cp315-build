@@ -8,6 +8,9 @@ on:
         required: true
         default: "v1.32.0"
 
+permissions:
+  contents: write
+
 jobs:
   build-win-x64:
     runs-on: windows-latest
@@ -37,7 +40,16 @@ jobs:
       - name: Patch setup.py for Python 3.15 classifier
         shell: pwsh
         run: |
-          python -c "p='ort/setup.py'; s=open(p,'r',encoding='utf-8').read(); t='\"Programming Language :: Python :: 3.14\",'; s=s.replace(t, t+'\n    \"Programming Language :: Python :: 3.15\",') if '3.15' not in s else s; open(p,'w',encoding='utf-8').write(s)"
+          @'
+          from pathlib import Path
+          p = Path("ort/setup.py")
+          s = p.read_text(encoding="utf-8")
+          target = '"Programming Language :: Python :: 3.14",'
+          if "3.15" not in s and target in s:
+              s = s.replace(target, target + '\n    "Programming Language :: Python :: 3.15",')
+              p.write_text(s, encoding="utf-8")
+          print("setup.py patched successfully")
+          '@ | python -
 
       - name: Build ONNX Runtime CPU Wheel
         shell: pwsh
@@ -65,3 +77,13 @@ jobs:
           name: onnxruntime-${{ inputs.ort_tag }}-cp315-win_amd64
           path: dist_out/*.whl
           retention-days: 90
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $tag = "${{ inputs.ort_tag }}-cp315"
+          $whl = (Get-ChildItem dist_out\*.whl | Select-Object -First 1).FullName
+          gh release create $tag $whl --title "ONNX Runtime ${{ inputs.ort_tag }} (Python 3.15 Windows x64)" --notes "Unofficial CPU wheel built from microsoft/onnxruntime ${{ inputs.ort_tag }} for Python 3.15 (cp315-win_amd64)." || gh release upload $tag $whl --clobber
